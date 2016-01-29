@@ -120,15 +120,15 @@ version (Windows)
         private void* _aligned_malloc(size_t size, size_t alignment) @nogc
         {
             import std.c.stdlib: malloc;
-            size_t offset = alignment + size_t.sizeof * 2 - 1;
+            size_t offset = alignment + AlignInfo.sizeof - 1;
 
             // unaligned chunk
             void* basePtr = malloc(size + offset);
             if (!basePtr) return null;
 
             // get aligned location within the chunk
-            void* alignedPtr = cast(void**)((cast(size_t)(basePtr) + offset)
-                & ~(alignment - 1));
+            void* alignedPtr = cast(void*)
+                roundDownToAlignment(cast(size_t)basePtr + offset, alignment);
 
             // write the header before the aligned pointer
             AlignInfo* head = AlignInfo(alignedPtr);
