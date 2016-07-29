@@ -1273,6 +1273,66 @@ struct Slice(size_t _N, _Range)
         }
     }
 
+    /// Indicates whether the Slice is based on an in-memory array.
+    enum isMemory = is(PureRange == Range) && hasPtrBehavior!PureRange;
+
+    /++
+    Returns:
+        true if the slice is contiguous, i.e. all elements are next to
+        each (with no gaps) in memory.
+
+    See_also:
+        $(LREF .Slice.ptr)
+    +/
+    bool isContiguous() const @property
+    {
+        if (sl.structure.strides[$-1] != 1)
+            return false;
+
+        foreach (idx; Iota!(1, SL.N))
+            if (sl.structure.strides[idx - 1] !=
+            sl.structure.lengths[idx] * sl.structure.strides[idx])
+                return false;
+
+        return true;
+    }
+
+    static if (doUnittest)
+    ///
+    @system @nogc pure nothrow unittest
+    {
+        import core.stdc.string : memcpy;
+        import std.algorithm.mutation : copy;
+        import std.experimental.ndslice.selection : byElement, iotaSlice;
+        import std.range : iota;
+
+        // `iotaSlice` return a contiguous range.
+        assert(iotaSlice(2, 3).isContiguous);
+
+        // Since `iotaSlice` is not backed by actual memory
+        // (instead it generates its elements on demand),
+        // it cannot be used by functions like `memcpy`.
+        static assert(!iotaSlice(2, 3).isMemory);
+
+        int[12] src = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+
+        auto slice = src[].sliced(3, 4);
+        assert(slice == iotaSlice(3, 4));
+        assert(slice.isContiguous);
+
+        int[12] dest;
+
+        // If `isContiguous` returns true, than it safe to
+        // call functions like `memcpy` that rely on pointer
+        // arithmetic for more efficient program execution.
+        if (slice.isContiguous && slice.isMemory)
+            memcpy(dest.ptr, slice.ptr, slice.elementsCount * int.sizeof);
+        else
+            copy(slice.byElement, dest[]);
+
+        assert(dest == src);
+    }
+
     /++
     Returns: static array of lengths
     See_also: $(LREF .Slice.structure)
