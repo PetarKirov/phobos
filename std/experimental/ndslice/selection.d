@@ -933,9 +933,10 @@ auto byElement(size_t N, Range)(auto ref Slice!(N, Range) slice)
             size_t _length;
             size_t[N] _indexes;
 
+            static if (canSave!PureRange)
             auto save() @property
             {
-                return this;
+                return typeof(this)(_slice.save, _length, _indexes);
             }
 
             bool empty() const @property
@@ -1447,9 +1448,10 @@ auto byElementInStandardSimplex(size_t N, Range)(auto ref Slice!(N, Range) slice
             size_t sum;
             size_t[N] _indexes;
 
+            static if (canSave!PureRange)
             auto save() @property
             {
-                return this;
+                return typeof(this)(_slice.save, _length, maxHypercubeLength, sum, _indexes);
             }
 
             bool empty() const @property
@@ -1686,6 +1688,12 @@ template IndexSlice(size_t N)
     {
         private size_t[N-1] _lengths;
 
+        IndexMap save() @property const
+        {
+            pragma(inline, true);
+            return this;
+        }
+
         size_t[N] opIndex(size_t index) const
         {
             pragma(inline, true);
@@ -1731,7 +1739,7 @@ IotaSlice!(Lengths.length) iotaSlice(Lengths...)(Lengths lengths)
 IotaSlice!N iotaSlice(size_t N)(auto ref size_t[N] lengths, size_t shift = 0)
 {
     import std.experimental.ndslice.slice : sliced;
-    with (typeof(return)) return Range.init.sliced(lengths, shift);
+    return IotaMap!().init.sliced(lengths, shift);
 }
 
 ///
@@ -1777,6 +1785,7 @@ template IotaSlice(size_t N)
 struct IotaMap()
 {
     enum bool empty = false;
+    enum IotaMap save = IotaMap.init;
 
     static size_t opIndex()(size_t index) @safe pure nothrow @nogc @property
     {
