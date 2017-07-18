@@ -359,9 +359,9 @@ struct File
         uint refs = uint.max / 2;
         bool isPopened; // true iff the stream has been created by popen()
         Orientation orientation;
+        string name;
     }
     private Impl* _p;
-    private string _name;
 
     package this(FILE* handle, string name, uint refs = 1, bool isPopened = false) @trusted
     {
@@ -374,7 +374,7 @@ struct File
         _p.refs = refs;
         _p.isPopened = isPopened;
         _p.orientation = Orientation.unknown;
-        _name = name;
+        _p.name = name;
     }
 
 /**
@@ -506,7 +506,7 @@ Throws: $(D ErrnoException) in case of error.
 
         enforce(isOpen, "Attempting to reopen() an unopened file");
 
-        auto namez = (name == null ? _name : name).tempCString!FSChar();
+        auto namez = (name == null ? _p.name : name).tempCString!FSChar();
         auto modez = stdioOpenmode.tempCString!FSChar();
 
         FILE* fd = _p.handle;
@@ -520,7 +520,7 @@ Throws: $(D ErrnoException) in case of error.
             : text("Cannot reopen file in mode `", stdioOpenmode, "'"));
 
         if (name !is null)
-            _name = name;
+            _p.name = name;
     }
 
     @system unittest // Test changing filename
@@ -705,7 +705,7 @@ If a $(D File) was created with $(LREF tmpfile) and $(LREF wrapFile)
 it has no name.*/
     @property string name() const @safe pure nothrow
     {
-        return _name;
+        return _p.name;
     }
 
 /**
@@ -799,13 +799,13 @@ Throws: $(D ErrnoException) on error.
             {
                 auto res = pclose(_p.handle);
                 errnoEnforce(res != -1,
-                        "Could not close pipe `"~_name~"'");
+                        "Could not close pipe `" ~ name ~ "'");
                 errnoEnforce(res == 0, format("Command returned %d", res));
                 return;
             }
         }
         errnoEnforce(.fclose(_p.handle) == 0,
-                "Could not close file `"~_name~"'");
+                "Could not close file `" ~ name ~ "'");
     }
 
 /**
@@ -977,7 +977,7 @@ Throws: $(D ErrnoException) if the file is not opened or if the call to $(D fwri
         errnoEnforce(result == buffer.length,
                 text("Wrote ", result, " instead of ", buffer.length,
                         " objects of type ", T.stringof, " to file `",
-                        _name, "'"));
+                        name, "'"));
     }
 
     ///
@@ -1026,7 +1026,7 @@ Throws: $(D Exception) if the file is not opened.
             alias fseekFun = fseeko;
         }
         errnoEnforce(fseekFun(_p.handle, to!off_t(offset), origin) == 0,
-                "Could not seek in file `"~_name~"'");
+                "Could not seek in file `" ~ name ~ "'");
     }
 
     @system unittest
@@ -1082,7 +1082,7 @@ Throws: $(D Exception) if the file is not opened.
             immutable result = ftello(cast(FILE*) _p.handle);
         }
         errnoEnforce(result != -1,
-                "Query ftell() failed for file `"~_name~"'");
+                "Query ftell() failed for file `" ~ name ~ "'");
         return result;
     }
 
@@ -1129,7 +1129,7 @@ Throws: $(D Exception) if the file is not opened.
 
         enforce(isOpen, "Attempting to call setvbuf() on an unopened file");
         errnoEnforce(.setvbuf(_p.handle, null, mode, size) == 0,
-                "Could not set buffering for file `"~_name~"'");
+                "Could not set buffering for file `" ~ name ~ "'");
     }
 
 /**
@@ -1146,7 +1146,7 @@ Throws: $(D Exception) if the file is not opened.
         enforce(isOpen, "Attempting to call setvbuf() on an unopened file");
         errnoEnforce(.setvbuf(_p.handle,
                         cast(char*) buf.ptr, mode, buf.length) == 0,
-                "Could not set buffering for file `"~_name~"'");
+                "Could not set buffering for file `" ~ name ~ "'");
     }
 
 
@@ -1225,7 +1225,7 @@ $(UL
             immutable short type = lockType == LockType.readWrite
                 ? F_WRLCK : F_RDLCK;
             errnoEnforce(lockImpl(F_SETLKW, type, start, length) != -1,
-                    "Could not set lock for file `"~_name~"'");
+                    "Could not set lock for file `" ~ name ~ "'");
         }
         else
         version(Windows)
@@ -1234,7 +1234,7 @@ $(UL
             immutable type = lockType == LockType.readWrite ?
                 LOCKFILE_EXCLUSIVE_LOCK : 0;
             wenforce(lockImpl!LockFileEx(start, length, type),
-                    "Could not set lock for file `"~_name~"'");
+                    "Could not set lock for file `" ~ name ~ "'");
         }
         else
             static assert(false);
@@ -1262,7 +1262,7 @@ specified file segment was already locked.
             immutable res = lockImpl(F_SETLK, type, start, length);
             if (res == -1 && (errno == EACCES || errno == EAGAIN))
                 return false;
-            errnoEnforce(res != -1, "Could not set lock for file `"~_name~"'");
+            errnoEnforce(res != -1, "Could not set lock for file `" ~ name ~ "'");
             return true;
         }
         else
@@ -1277,7 +1277,7 @@ specified file segment was already locked.
             if (!res && (GetLastError() == ERROR_IO_PENDING
                 || GetLastError() == ERROR_LOCK_VIOLATION))
                 return false;
-            wenforce(res, "Could not set lock for file `"~_name~"'");
+            wenforce(res, "Could not set lock for file `" ~ name ~ "'");
             return true;
         }
         else
@@ -1297,14 +1297,14 @@ Removes the lock over the specified file segment.
             import core.sys.posix.fcntl : F_SETLK, F_UNLCK;
             import std.exception : errnoEnforce;
             errnoEnforce(lockImpl(F_SETLK, F_UNLCK, start, length) != -1,
-                    "Could not remove lock for file `"~_name~"'");
+                    "Could not remove lock for file `" ~ name ~ "'");
         }
         else
         version(Windows)
         {
             import core.sys.windows.windows : UnlockFileEx;
             wenforce(lockImpl!UnlockFileEx(start, length),
-                "Could not remove lock for file `"~_name~"'");
+                "Could not remove lock for file `" ~ name ~ "'");
         }
         else
             static assert(false);
@@ -2894,7 +2894,7 @@ See $(LREF byChunk) for an example.
             import std.exception : enforce;
 
             enforce(f._p && f._p.handle);
-            name = f._name;
+            name = f.name;
             fps = f._p.handle;
             static if (locking)
                 FLOCK(fps);
