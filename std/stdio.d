@@ -360,21 +360,32 @@ struct File
         bool isPopened; // true iff the stream has been created by popen()
         Orientation orientation;
         string name;
+
+        @trusted nothrow @nogc
+        static Impl* make(FILE* hndl, string name, uint refs = 1, bool isPopened = false)
+        {
+            import core.memory : pureMalloc;
+            import std.conv : emplace;
+
+            auto res = cast(Impl*) pureMalloc(Impl.sizeof);
+            res || assert(0, "Out of memory");
+            res.emplace(
+                hndl,
+                refs,
+                isPopened,
+                Orientation.unknown,
+                name
+            );
+
+            return res;
+        }
     }
     private Impl* _p;
 
-    package this(FILE* handle, string name, uint refs = 1, bool isPopened = false) @trusted
+    @trusted nothrow @nogc
+    package this(FILE* handle, string name, uint refs = 1, bool isPopened = false)
     {
-        import core.stdc.stdlib : malloc;
-        import std.exception : enforce;
-
-        assert(!_p);
-        _p = cast(Impl*) enforce(malloc(Impl.sizeof), "Out of memory");
-        _p.handle = handle;
-        _p.refs = refs;
-        _p.isPopened = isPopened;
-        _p.orientation = Orientation.unknown;
-        _p.name = name;
+        this._p = Impl.make(handle, name, refs, isPopened);
     }
 
 /**
@@ -4519,8 +4530,7 @@ Initialize with a message and an error code.
                 break;
             if (atomicOp!"+="(spinlock, 1) == 1)
             {
-                impl.handle = handle;
-                result._p = &impl;
+                result._p = File.Impl.make(handle, null);
                 atomicOp!"+="(spinlock, uint.max / 2);
                 break;
             }
