@@ -357,7 +357,7 @@ struct File
     {
         FILE * handle = null; // Is null iff this Impl is closed by another File
         uint refs = uint.max / 2;
-        bool isPopened; // true iff the stream has been created by popen()
+        immutable bool isPopened; // true iff the stream has been created by popen()
         Orientation orientation;
         string name;
 
