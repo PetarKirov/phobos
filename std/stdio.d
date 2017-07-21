@@ -349,23 +349,37 @@ Hello, Jimmy!
  */
 struct File
 {
+    import core.atomic : atomicOp, atomicLoad, atomicStore;
     import std.range.primitives : ElementEncodingType;
     import std.traits : isScalarType, isArray;
     enum Orientation { unknown, narrow, wide }
 
     private struct Impl
     {
-        FILE * handle = null; // Is null iff this Impl is closed by another File
-        uint refs = uint.max / 2;
+        FILE* _handle = null; // Is null iff this Impl is closed by another File
+        shared int refs = int.max / 2;
         immutable bool isPopened; // true iff the stream has been created by popen()
-        Orientation orientation;
+        immutable Orientation orientation;
         string name;
+        bool __closed__;
+
+        @trusted pure nothrow @nogc
+        FILE* handle() const
+        {
+            return cast(FILE*)this._handle;
+        }
 
         @trusted nothrow @nogc
-        static Impl* make(FILE* hndl, string name, uint refs = 1, bool isPopened = false)
+        static Impl* make(FILE* hndl, string name, int refs = 1, bool isPopened = false)
         {
             import core.memory : pureMalloc;
             import std.conv : emplace;
+
+            import core.stdc.wchar_ : fwide;
+            auto w = fwide(hndl, 0);
+            Orientation orient;
+            if (w < 0) orient = Orientation.narrow;
+            else if (w > 0) orient = Orientation.wide;
 
             auto res = cast(Impl*) pureMalloc(Impl.sizeof);
             res || assert(0, "Out of memory");
@@ -373,7 +387,7 @@ struct File
                 hndl,
                 refs,
                 isPopened,
-                Orientation.unknown,
+                orient,
                 name
             );
 
@@ -383,7 +397,7 @@ struct File
     private Impl* _p;
 
     @trusted nothrow @nogc
-    package this(FILE* handle, string name, uint refs = 1, bool isPopened = false)
+    package this(FILE* handle, string name, int refs = 1, bool isPopened = false)
     {
         this._p = Impl.make(handle, name, refs, isPopened);
     }
@@ -411,10 +425,10 @@ Throws: $(D ErrnoException) if the file could not be opened.
         import std.conv : text;
         import std.exception : errnoEnforce;
 
-        this(errnoEnforce(.fopen(name, stdioOpenmode),
-                        text("Cannot open file `", name, "' in mode `",
-                                stdioOpenmode, "'")),
-                name);
+        this._p = Impl.make(
+            errnoEnforce(.fopen(name, stdioOpenmode),
+                text("Cannot open file `", name, "' in mode `", stdioOpenmode, "'")),
+            name);
 
         // MSVCRT workaround (issue 14422)
         version (MICROSOFT_STDIO)
@@ -465,9 +479,19 @@ Throws: $(D ErrnoException) if the file could not be opened.
 
     this(this) @safe nothrow
     {
-        if (!_p) return;
-        assert(_p.refs);
-        ++_p.refs;
+        if (auto copy = _p)
+        {
+            auto latestObservedRC = atomicOp!"+="(_p.refs, 1);
+
+            if (latestObservedRC == 1)
+            {
+                // Most likely someone destroyed the other object while we were
+                // copying it and before we manged to secure it.
+                // In this case the only safe thing to do is to give up
+                // our potentially dead copy.
+                this._p = null;
+            }
+        }
     }
 
 /**
@@ -477,9 +501,7 @@ file.
  */
     void opAssign(File rhs) @safe
     {
-        import std.algorithm.mutation : swap;
-
-        swap(this, rhs);
+        this._p = rhs._p;
     }
 
 /**
@@ -588,7 +610,7 @@ Throws: $(D ErrnoException) in case of error.
         import std.exception : errnoEnforce;
 
         detach();
-        this = File(errnoEnforce(.popen(command, stdioOpenmode),
+        this._p = Impl.make(errnoEnforce(.popen(command, stdioOpenmode),
                         "Cannot run command `"~command~"'"),
                 command, 1, true);
     }
@@ -749,14 +771,13 @@ Throws: $(D ErrnoException) on failure if closing the file.
     void detach() @safe
     {
         if (!_p) return;
-        if (_p.refs == 1)
+        assert(atomicLoad(_p.refs));
+
+        if (atomicOp!"-="(_p.refs, 1) == 0)
             close();
         else
-        {
-            assert(_p.refs);
-            --_p.refs;
-            _p = null;
-        }
+            this._p = null;
+            //atomicStore(cast(shared)_p, null);
     }
 
     @safe unittest
@@ -798,9 +819,9 @@ Throws: $(D ErrnoException) on error.
                 free(_p);
             _p = null; // start a new life
         }
-        if (!_p.handle) return; // Impl is closed by another File
+        if (_p.__closed__) return; // Impl is closed by another File
 
-        scope(exit) _p.handle = null; // nullify the handle anyway
+        scope(exit) _p.__closed__ = true; // nullify the handle anyway
         version (Posix)
         {
             import core.sys.posix.stdio : pclose;
@@ -1677,13 +1698,13 @@ is recommended if you want to process a complete file.
         static if (is(C == char))
         {
             enforce(_p && _p.handle, "Attempt to read from an unopened file.");
-            if (_p.orientation == Orientation.unknown)
-            {
-                import core.stdc.wchar_ : fwide;
-                auto w = fwide(_p.handle, 0);
-                if (w < 0) _p.orientation = Orientation.narrow;
-                else if (w > 0) _p.orientation = Orientation.wide;
-            }
+            //if (_p.orientation == Orientation.unknown)
+            //{
+            //    import core.stdc.wchar_ : fwide;
+            //    auto w = fwide(_p.handle, 0);
+            //    if (w < 0) _p.orientation = Orientation.narrow;
+            //   else if (w > 0) _p.orientation = Orientation.wide;
+            //}
             return readlnImpl(_p.handle, buf, terminator, _p.orientation);
         }
         else
